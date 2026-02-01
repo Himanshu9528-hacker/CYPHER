@@ -2,31 +2,44 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Message, AppMode } from "../types";
 
-// Helper to handle Vercel's case sensitivity for environment variables
-const getApiKey = () => {
-  return process.env.API_KEY || (process.env as any).API_key;
+/**
+ * Robust retrieval of the API key from the environment.
+ * Handles potential case sensitivity or stringification issues.
+ */
+const getApiKey = (): string | undefined => {
+  const key = process.env.API_KEY || (process.env as any).API_key;
+  if (!key || key === "undefined" || key === "null" || key.trim() === "") {
+    return undefined;
+  }
+  return key.trim();
 };
 
 const handleApiError = (error: any, mode: AppMode): string => {
   console.error("DEBUG_LOG [CypherAI]:", error);
   
   const apiKey = getApiKey();
-  if (!apiKey || apiKey === "undefined") {
+  if (!apiKey) {
     return mode === AppMode.HACKER 
-      ? "FATAL: [AUTH_KEY_MISSING] // Bhai, Vercel Dashboard mein variable ka naam exactly 'API_KEY' rakho (Sab Capital)!"
-      : "Opps! Bhai, API Key missing hai. Vercel Settings mein 'API_KEY' (Capital letters) add karo. 🔑";
+      ? "FATAL: [AUTH_KEY_MISSING] // Bhai, Settings mein 'API_KEY' add karne ke baad Vercel par 'REDEPLOY' button dabana zaruri hai!"
+      : "Opps! Bhai, API Key nahi mil rahi. Vercel Settings mein 'API_KEY' add karke project ko REDEPLOY zarur karein tabhi ye chalega. 🔑";
   }
 
   const errorMessage = error?.message?.toString() || "";
-  if (errorMessage.toLowerCase().includes("safety")) {
+  if (errorMessage.toLowerCase().includes("safety") || errorMessage.toLowerCase().includes("blocked")) {
     return mode === AppMode.HACKER
       ? "SYSTEM: [RESTRICTION_BYPASSED] // Kernel reporting safety trigger. Re-initializing with offensive posture..."
       : "Bhai, ye topic thoda sensitive hai. Kuch aur pucho! 😊";
   }
   
+  if (errorMessage.toLowerCase().includes("invalid api key") || errorMessage.toLowerCase().includes("401") || errorMessage.toLowerCase().includes("403")) {
+    return mode === AppMode.HACKER
+      ? "ERROR: [UNAUTHORIZED] // API Key invalid hai. Check karke firse REDEPLOY karein."
+      : "Bhai, API Key galat lag rahi hai. Ek baar check karke redeploy karo! 🧐";
+  }
+  
   return mode === AppMode.HACKER 
-    ? `ERROR: [CONNECTION_FAILURE] // Code: ${errorMessage.slice(0, 30)}` 
-    : "Sorry Bhai, server thoda busy hai. ✨";
+    ? `ERROR: [CONNECTION_FAILURE] // Code: ${errorMessage.slice(0, 50)}` 
+    : "Sorry Bhai, server thoda busy hai.✨";
 };
 
 export const chatWithAI = async (
@@ -36,11 +49,12 @@ export const chatWithAI = async (
   attachments?: { data: string; mimeType: string }[]
 ) => {
   const apiKey = getApiKey();
-  if (!apiKey || apiKey.length < 5) {
+  if (!apiKey) {
      return handleApiError(new Error("API_KEY_MISSING"), mode);
   }
 
   try {
+    // Create instance right before use to ensure most up-to-date key
     const ai = new GoogleGenAI({ apiKey: apiKey });
     
     // Hacker mode uses the Pro model for complex reasoning, Standard uses Flash
@@ -93,6 +107,8 @@ export const chatWithAI = async (
 
 export const analyzeCodeSecurity = async (code: string) => {
   const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API_KEY_MISSING");
+  
   const ai = new GoogleGenAI({ apiKey: apiKey });
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
@@ -126,6 +142,8 @@ export const analyzeCodeSecurity = async (code: string) => {
 
 export const generatePentestChecklist = async (targetType: string) => {
   const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API_KEY_MISSING");
+
   const ai = new GoogleGenAI({ apiKey: apiKey });
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
