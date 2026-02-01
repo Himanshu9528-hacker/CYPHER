@@ -1,0 +1,9 @@
+
+{
+  "name": "CypherGuard AI: Universal Intelligence",
+  "description": "A dual-purpose AI assistant for everyday tasks and deep security research, featuring a high-performance chat interface and specialized Hacker Mode.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
