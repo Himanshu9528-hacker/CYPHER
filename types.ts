@@ -7,7 +7,8 @@ export enum AppMode {
 export interface User {
   id: string;
   username: string;
-  password?: string; // Simulated password
+  identifier?: string; // Email or Mobile
+  password?: string;
   photo?: string;
   isHacker: boolean;
   hackerUsageCount: number;
