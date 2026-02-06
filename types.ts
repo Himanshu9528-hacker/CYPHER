@@ -7,8 +7,11 @@ export enum AppMode {
 export interface User {
   id: string;
   username: string;
+  password?: string; // Simulated password
   photo?: string;
   isHacker: boolean;
+  hackerUsageCount: number;
+  lastUsageDate: string; // YYYY-MM-DD
 }
 
 export interface Message {
@@ -19,7 +22,7 @@ export interface Message {
 
 export interface ChatSession {
   id: string;
-  userId: string; // Added to link session to user
+  userId: string;
   title: string;
   messages: Message[];
   mode: AppMode;
@@ -28,7 +31,6 @@ export interface ChatSession {
 
 export interface AppState {
   premiumUnlocked: boolean;
-  hackerTrialCount: number;
   activeSessionId: string | null;
   sessions: ChatSession[];
 }
