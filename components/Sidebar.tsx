@@ -2,6 +2,8 @@
 import React, { useState, useRef } from 'react';
 import { AppMode, ChatSession, User } from '../types';
 
+declare const emailjs: any;
+
 interface SidebarProps {
   mode: AppMode;
   setMode: (mode: AppMode) => void;
@@ -23,6 +25,11 @@ const Sidebar: React.FC<SidebarProps> = ({
   mode, setMode, activeView, setActiveView, sessions, activeSessionId, setActiveSessionId, createNewSession, isOpen, closeSidebar, currentUser, onLogout, updateUserPhoto
 }) => {
   const [showAbout, setShowAbout] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackType, setFeedbackType] = useState('Feedback');
+  const [isSending, setIsSending] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isHacker = mode === AppMode.HACKER;
 
@@ -39,6 +46,31 @@ const Sidebar: React.FC<SidebarProps> = ({
         updateUserPhoto(base64);
       };
       reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSendFeedback = async () => {
+    if (!feedbackText.trim() || isSending) return;
+    setIsSending(true);
+    try {
+      const templateParams = {
+        to_email: 'himanshu.prof.hack@gmail.com', 
+        from_name: currentUser?.username || 'Guest',
+        feedback_type: feedbackType,
+        message: feedbackText,
+        user_id: currentUser?.id || 'anonymous'
+      };
+      
+      await emailjs.send('service_j3vkuxm', 'template_uxyn8ts', templateParams);
+      
+      alert("Bhai, aapka feedback mil gaya! Thanks for the support. ❤️");
+      setShowFeedback(false);
+      setFeedbackText('');
+    } catch (err) {
+      const mailtoLink = `mailto:himanshu.prof.hack@gmail.com?subject=${feedbackType} from ${currentUser?.username}&body=${feedbackText}`;
+      window.location.href = mailtoLink;
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -143,6 +175,16 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="p-6 space-y-3 bg-gradient-to-t from-black/20 to-transparent">
           <button 
+            onClick={() => setShowFeedback(true)}
+            className={`w-full py-3.5 px-5 rounded-xl text-[9px] font-black uppercase tracking-widest border transition-all flex items-center gap-3 ${
+              isHacker ? 'border-green-500/10 text-green-800 hover:text-green-500 hover:bg-green-500/5' : 'border-white/5 text-slate-500 hover:text-slate-300 hover:bg-white/5'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" /></svg>
+            Report & Feedback
+          </button>
+          
+          <button 
             onClick={() => setShowAbout(true)}
             className={`w-full p-3 rounded-[1.5rem] border flex items-center gap-4 transition-all active:scale-95 group ${
               isHacker ? 'bg-zinc-950 border-green-500/10' : 'bg-slate-900 border-white/5'
@@ -170,6 +212,62 @@ const Sidebar: React.FC<SidebarProps> = ({
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[90] lg:hidden animate-in fade-in duration-300" 
           onClick={closeSidebar}
         />
+      )}
+
+      {/* Report & Feedback Modal */}
+      {showFeedback && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center p-6 backdrop-blur-2xl bg-black/70 animate-in fade-in duration-300">
+          <div className={`relative w-full max-w-md rounded-[2.5rem] border shadow-2xl p-8 space-y-6 ${
+            isHacker ? 'bg-zinc-950 border-green-500/20' : 'bg-slate-900 border-white/10'
+          }`}>
+            <h2 className={`text-2xl font-black uppercase tracking-tighter ${isHacker ? 'text-green-500 font-mono' : 'text-slate-100'}`}>
+              REPORT & FEEDBACK
+            </h2>
+            <div className="space-y-4">
+              <div>
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2 block">Issue Type</label>
+                <select 
+                  value={feedbackType}
+                  onChange={(e) => setFeedbackType(e.target.value)}
+                  className={`w-full px-4 py-3 rounded-xl border bg-black/30 outline-none text-sm font-bold ${isHacker ? 'border-green-500/20 text-green-500' : 'border-white/5 text-slate-200'}`}
+                >
+                  <option>Feedback</option>
+                  <option>Bug Report</option>
+                  <option>Feature Request</option>
+                  <option>Security Flaw</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2 block">Description</label>
+                <textarea 
+                  rows={4}
+                  value={feedbackText}
+                  onChange={(e) => setFeedbackText(e.target.value)}
+                  placeholder="Bhai, kya dikkat aa rahi hai? Details likho..."
+                  className={`w-full px-4 py-3 rounded-xl border bg-black/30 outline-none text-sm font-medium resize-none ${isHacker ? 'border-green-500/20 text-green-500 placeholder:text-green-900 font-mono' : 'border-white/5 text-slate-200'}`}
+                />
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setShowFeedback(false)}
+                className="flex-1 py-4 rounded-xl text-[10px] font-black uppercase tracking-widest text-slate-500 bg-white/5 hover:bg-white/10"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleSendFeedback}
+                disabled={isSending || !feedbackText.trim()}
+                className={`flex-1 py-4 rounded-xl text-[10px] font-black uppercase tracking-widest disabled:opacity-30 ${
+                  isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'
+                }`}
+              >
+                {isSending ? 'Sending...' : 'Send Report'}
+              </button>
+            </div>
+            <p className="text-[8px] text-center text-slate-600 font-bold uppercase tracking-widest">Sent directly to: himanshu.prof.hack@gmail.com</p>
+          </div>
+        </div>
       )}
 
       {showAbout && (
