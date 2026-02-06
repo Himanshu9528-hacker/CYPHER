@@ -1,152 +1,289 @@
 
-import React, { useState, useRef, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Message, AppMode } from '../types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { AppMode, User } from '../types';
 
-interface ChatInterfaceProps {
-  mode: AppMode;
-  messages: Message[];
-  onSendMessage: (content: string, attachments?: { data: string; mimeType: string }[]) => void;
-  isLoading: boolean;
-  premiumUnlocked: boolean;
-  hackerTrialCount: number;
-  trialLimit: number;
-  unlockPremium: () => void;
+declare const emailjs: any;
+
+interface LoginProps {
+  onLogin: (user: User) => void;
 }
 
-const CodeBlock = ({ language, value, mode }: { language: string; value: string; mode: AppMode }) => {
-  const [copied, setCopied] = useState(false);
-  const isHacker = mode === AppMode.HACKER;
+enum AuthView {
+  WELCOME = 'WELCOME',
+  IDENTIFY = 'IDENTIFY',
+  OTP = 'OTP',
+  REGISTER = 'REGISTER',
+  SIGNIN_PASSWORD = 'SIGNIN_PASSWORD'
+}
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+const Login: React.FC<LoginProps> = ({ onLogin }) => {
+  const [mode, setMode] = useState(AppMode.STANDARD);
+  const [view, setView] = useState(AuthView.WELCOME);
+  const [isSigningUp, setIsSigningUp] = useState(false);
+  
+  const [identifier, setIdentifier] = useState('');
+  const [otp, setOtp] = useState('');
+  const [sentOtp, setSentOtp] = useState<string | null>(null);
+  
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  return (
-    <div className={`my-4 rounded-2xl overflow-hidden border shadow-lg transition-all ${
-      isHacker ? 'border-green-500/20 bg-black/80' : 'border-slate-800 bg-slate-950/80'
-    }`}>
-      <div className={`flex items-center justify-between px-5 py-2.5 text-[9px] font-black uppercase tracking-widest ${
-        isHacker ? 'bg-green-500/5 text-green-500' : 'bg-slate-900 text-slate-500'
-      }`}>
-        <span>{language || 'SCRIPT'}</span>
-        <button onClick={handleCopy} className="hover:text-white transition-colors">
-          {copied ? 'COPIED' : 'COPY'}
-        </button>
-      </div>
-      <div className="p-5 overflow-x-auto scroll-hide">
-        <pre className="m-0"><code className="font-mono text-xs leading-relaxed">{value}</code></pre>
-      </div>
-    </div>
-  );
-};
-
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ mode, messages, onSendMessage, isLoading }) => {
-  const [input, setInput] = useState('');
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const isHacker = mode === AppMode.HACKER;
+  // EmailJS Config - Ensure these match your EmailJS Dashboard
+  const EMAILJS_PUBLIC_KEY = "IPXA-vfIhwSTKjhqP"; 
+  const SERVICE_ID = "service_j3vkuxm";
+  const TEMPLATE_ID = "template_uxyn8ts";
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
+    if (typeof emailjs !== 'undefined' && EMAILJS_PUBLIC_KEY) {
+      emailjs.init(EMAILJS_PUBLIC_KEY);
     }
-  }, [messages, isLoading]);
+  }, []);
 
-  const handleSend = () => {
-    if (!input.trim() || isLoading) return;
-    onSendMessage(input);
-    setInput('');
+  const isHacker = mode === AppMode.HACKER;
+
+  const getUsers = (): Record<string, User> => {
+    const data = localStorage.getItem('cypher_user_db_v2');
+    return data ? JSON.parse(data) : {};
+  };
+
+  const saveUser = (user: User) => {
+    const users = getUsers();
+    users[user.identifier!.toLowerCase()] = user;
+    localStorage.setItem('cypher_user_db_v2', JSON.stringify(users));
+  };
+
+  const generateOTP = useCallback(() => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }, []);
+
+  const handleStartAuth = (signingUp: boolean) => {
+    setIsSigningUp(signingUp);
+    setView(AuthView.IDENTIFY);
+    setError('');
+  };
+
+  const handleIdentifierSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const cleanId = identifier.trim().toLowerCase();
+    const users = getUsers();
+    const existingUser = users[cleanId];
+
+    if (isSigningUp) {
+      if (existingUser) {
+        setError('Bhai, ye account pehle se hai. Sign In karo.');
+        return;
+      }
+      
+      setLoading(true);
+      const secureOtp = generateOTP();
+      setSentOtp(secureOtp);
+
+      try {
+        const templateParams = {
+          to_email: cleanId,
+          passcode: secureOtp,
+          to_name: cleanId.split('@')[0] || 'User',
+          user_mode: mode
+        };
+        
+        await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams);
+        setView(AuthView.OTP);
+      } catch (err: any) {
+        console.error("EmailJS Error:", err);
+        // Fallback: If email fails, show OTP in alert for testing
+        setError('Email service error. Alerting OTP for manual entry.');
+        alert(`CYPHER OTP: ${secureOtp}`);
+        setView(AuthView.OTP);
+      } finally { setLoading(false); }
+    } else {
+      if (!existingUser) {
+        setError('Bhai, koi account nahi mila. Sign Up karo.');
+        return;
+      }
+      setView(AuthView.SIGNIN_PASSWORD);
+    }
+  };
+
+  const handleVerifyOTP = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (otp === sentOtp) {
+      setView(AuthView.REGISTER);
+      setError('');
+    } else {
+      setError('Galat OTP hai bhai. Dobara check karo.');
+    }
+  };
+
+  const handleFinalSignup = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (username.length < 3) return setError('Username thoda bada rakho.');
+    if (password.length < 6) return setError('Password kam se kam 6 characters ka ho.');
+    if (password !== confirmPassword) return setError('Passwords match nahi ho rahe.');
+
+    const newUser: User = {
+      id: Math.random().toString(36).substr(2, 9),
+      username: username.trim(),
+      identifier: identifier.trim().toLowerCase(),
+      password: password,
+      isHacker: mode === AppMode.HACKER,
+      hackerUsageCount: 0,
+      lastUsageDate: new Date().toISOString().split('T')[0]
+    };
+
+    saveUser(newUser);
+    onLogin(newUser);
+  };
+
+  const handleFinalSignin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const users = getUsers();
+    const user = users[identifier.trim().toLowerCase()];
+
+    if (user && user.password === password) {
+      onLogin(user);
+    } else {
+      setError('Galat password! Dobara try karo.');
+    }
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-4xl mx-auto overflow-hidden">
-      <div className="flex-1 overflow-y-auto chat-scroll px-4 md:px-8 py-8 space-y-8" ref={scrollRef}>
-        {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center opacity-40 py-20 animate-in fade-in duration-1000">
-            <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mb-6 border-2 shadow-2xl ${isHacker ? 'border-green-500 text-green-500 shadow-green-500/10' : 'border-blue-600 text-blue-600 shadow-blue-500/10'}`}>
-               <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-            </div>
-            <h3 className="text-2xl font-black tracking-tight mb-2 uppercase font-mono">{isHacker ? 'Kernel Uplink Ready' : 'Ready to help, Bhai!'}</h3>
-            <p className="text-xs font-medium tracking-wide max-w-xs">{isHacker ? 'Direct bypass protocols loaded. Inject target parameters.' : 'I can write code, explain topics, or just chat. What\'s on your mind?'}</p>
-          </div>
-        ) : (
-          messages.map((msg, i) => (
-            <div key={i} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-4 duration-500`}>
-              <div className={`flex items-center gap-2 mb-2 text-[9px] font-black uppercase tracking-[0.2em] opacity-40 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                <span>{msg.role === 'user' ? 'LOCAL_HOST' : (isHacker ? 'CYPHER_ULTRA' : 'CYPHER')}</span>
-              </div>
-              <div className={`max-w-[90%] md:max-w-[80%] px-6 py-4 rounded-[2rem] text-sm leading-relaxed shadow-xl border ${
-                msg.role === 'user' 
-                  ? 'bg-blue-600 text-white rounded-tr-none border-blue-500 shadow-blue-600/10' 
-                  : 'bg-slate-900/40 border-white/5 text-slate-100 rounded-tl-none'
-              }`}>
-                <div className="prose prose-invert max-w-none prose-sm sm:prose-base">
-                  <ReactMarkdown 
-                    remarkPlugins={[remarkGfm]}
-                    components={{
-                      code({ inline, className, children }: any) {
-                        const match = /language-(\w+)/.exec(className || '');
-                        return !inline && match ? (
-                          <CodeBlock language={match[1]} value={String(children).replace(/\n$/, '')} mode={mode} />
-                        ) : (
-                          <code className="bg-black/40 px-1.5 py-0.5 rounded font-mono text-[0.9em]">{children}</code>
-                        );
-                      }
-                    }}
-                  >
-                    {msg.content}
-                  </ReactMarkdown>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-        {isLoading && (
-          <div className="flex gap-2 px-6 py-3 rounded-full border border-white/5 bg-white/5 w-fit animate-pulse">
-            <div className={`w-2 h-2 rounded-full animate-bounce ${isHacker ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-            <div className={`w-2 h-2 rounded-full animate-bounce delay-150 ${isHacker ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-            <div className={`w-2 h-2 rounded-full animate-bounce delay-300 ${isHacker ? 'bg-green-500' : 'bg-blue-500'}`}></div>
-          </div>
-        )}
-      </div>
+    <div className={`min-h-screen flex items-center justify-center p-6 transition-all duration-700 ${isHacker ? 'bg-black' : 'bg-[#020617]'}`}>
+      <div className={`w-full max-w-md rounded-[3rem] border p-8 md:p-12 space-y-8 relative overflow-hidden transition-all duration-500 ${
+        isHacker ? 'bg-zinc-950 border-green-500/20 shadow-[0_0_50px_rgba(34,197,94,0.15)]' : 'bg-slate-900/50 border-white/10 shadow-2xl backdrop-blur-xl'
+      }`}>
+        
+        <div className={`absolute -top-24 -left-24 w-48 h-48 rounded-full blur-[100px] opacity-20 ${isHacker ? 'bg-green-500' : 'bg-blue-600'}`}></div>
 
-      <div className="p-4 md:p-10">
-        <div className={`max-w-4xl mx-auto flex items-center gap-2 p-2 pl-6 rounded-[2.5rem] border transition-all duration-300 focus-within:ring-4 ${
-          isHacker 
-            ? 'bg-zinc-950 border-green-500/20 focus-within:border-green-500/50 focus-within:ring-green-500/10' 
-            : 'bg-slate-900 border-white/10 shadow-2xl focus-within:border-blue-500/50 focus-within:ring-blue-500/10'
-        }`}>
-          <input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleSend(); }}
-            placeholder={isHacker ? "INJECT_PAYLOAD..." : "Ask Cyper anything, Bhai..."}
-            className="flex-1 bg-transparent py-4 outline-none text-[15px] font-medium placeholder-slate-600"
-          />
-          <button 
-            onClick={handleSend} 
-            disabled={isLoading || !input.trim()} 
-            className={`p-4 rounded-full transition-all active:scale-90 disabled:opacity-30 ${
-              isHacker 
-                ? 'bg-green-600 text-black hover:bg-green-500 shadow-green-600/20' 
-                : 'bg-blue-600 text-white shadow-xl shadow-blue-600/30 hover:bg-blue-500'
-            }`}
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-          </button>
+        <div className="text-center relative z-10">
+          <div className={`w-20 h-20 rounded-3xl flex items-center justify-center mx-auto border-2 transition-all duration-700 mb-6 ${
+            isHacker ? 'border-green-500 text-green-500 bg-green-500/5 rotate-12' : 'border-blue-600 text-blue-600 bg-blue-600/5 -rotate-12'
+          }`}>
+             <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+          </div>
+          <h1 className={`text-4xl font-black tracking-tighter ${isHacker ? 'text-green-500 font-mono' : 'text-slate-100'}`}>
+            CYPHER<span className="opacity-30">AI</span>
+          </h1>
+          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 mt-2">Access Portal Node v4.3</p>
         </div>
-        <p className="mt-3 text-[9px] text-center text-slate-600 font-bold uppercase tracking-[0.3em] opacity-40">
-           {isHacker ? 'Cypher-X Unrestricted Offensive Kernel v4.2' : 'Standard Universal Intelligence Node'}
-        </p>
+
+        {view === AuthView.WELCOME && (
+          <div className="space-y-6 animate-in fade-in zoom-in duration-500">
+            <div className="space-y-4">
+              <button 
+                onClick={() => handleStartAuth(false)}
+                className={`w-full py-5 rounded-3xl font-black uppercase tracking-[0.2em] text-xs transition-all active:scale-95 shadow-lg ${
+                  isHacker ? 'bg-green-600 text-black hover:bg-green-500 shadow-green-500/20' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-600/20'
+                }`}
+              >
+                Sign In
+              </button>
+              <button 
+                onClick={() => handleStartAuth(true)}
+                className={`w-full py-5 rounded-3xl font-black uppercase tracking-[0.2em] text-xs transition-all border ${
+                  isHacker ? 'border-green-500/30 text-green-500 hover:bg-green-500/5' : 'border-white/10 text-slate-300 hover:bg-white/5'
+                }`}
+              >
+                Sign Up
+              </button>
+            </div>
+            
+            <div className="flex bg-black/40 p-1 rounded-2xl border border-white/5">
+              <button onClick={() => setMode(AppMode.STANDARD)} className={`flex-1 py-3 rounded-xl text-[9px] font-black tracking-widest transition-all ${!isHacker ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-600'}`}>STANDARD</button>
+              <button onClick={() => setMode(AppMode.HACKER)} className={`flex-1 py-3 rounded-xl text-[9px] font-black tracking-widest transition-all ${isHacker ? 'bg-green-600 text-black shadow-lg' : 'text-slate-600'}`}>HACKER</button>
+            </div>
+          </div>
+        )}
+
+        {view === AuthView.IDENTIFY && (
+          <form onSubmit={handleIdentifierSubmit} className="space-y-6 animate-in slide-in-from-right-4 duration-500">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black uppercase tracking-widest text-slate-500 ml-4">
+                {isSigningUp ? 'Naya Email / Mobile' : 'Aapka Email / Mobile'}
+              </label>
+              <input
+                type="text"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="Ex: hacker@gmail.com"
+                className={`w-full px-8 py-5 rounded-3xl border outline-none text-sm font-bold transition-all ${
+                  isHacker ? 'bg-black border-green-500/20 text-green-500 focus:border-green-500 font-mono' : 'bg-slate-950 border-white/5 text-slate-200 focus:border-blue-600'
+                }`}
+                required
+              />
+            </div>
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button disabled={loading} className={`w-full py-5 rounded-3xl font-black uppercase tracking-[0.2em] text-xs transition-all active:scale-95 ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>
+              {loading ? 'Sending Request...' : 'Continue'}
+            </button>
+            <button type="button" onClick={() => setView(AuthView.WELCOME)} className="w-full text-[9px] text-slate-600 font-black uppercase tracking-widest">Galti se aa gaya (Back)</button>
+          </form>
+        )}
+
+        {view === AuthView.OTP && (
+          <form onSubmit={handleVerifyOTP} className="space-y-6 animate-in slide-in-from-right-4 duration-500 text-center">
+            <h3 className={`text-xl font-black ${isHacker ? 'text-green-500' : 'text-white'}`}>Verification Code</h3>
+            <p className="text-xs text-slate-500">Bhai, check karo OTP bhej diya hai.</p>
+            <input
+              maxLength={6}
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+              placeholder="000000"
+              className={`w-full px-8 py-6 rounded-3xl border bg-black text-center text-3xl font-black tracking-[0.5em] outline-none ${
+                isHacker ? 'border-green-500/20 text-green-500' : 'border-white/5 text-slate-100'
+              }`}
+              required
+            />
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button className={`w-full py-5 rounded-3xl font-black uppercase tracking-[0.2em] text-xs transition-all active:scale-95 ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>Verify OTP</button>
+            <button type="button" onClick={() => setView(AuthView.IDENTIFY)} className="text-[9px] text-slate-600 font-black uppercase tracking-widest">Number galat hai? (Edit)</button>
+          </form>
+        )}
+
+        {view === AuthView.REGISTER && (
+          <form onSubmit={handleFinalSignup} className="space-y-4 animate-in fade-in duration-500">
+            <h3 className={`text-xl font-black text-center mb-6 ${isHacker ? 'text-green-500' : 'text-white'}`}>Profile Setup</h3>
+            <input placeholder="Username (Unique)" value={username} onChange={e => setUsername(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black font-bold outline-none ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+            <input type="password" placeholder="Set Password" value={password} onChange={e => setPassword(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black font-bold outline-none ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+            <input type="password" placeholder="Confirm Password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black font-bold outline-none ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button className={`w-full py-5 mt-4 rounded-3xl font-black uppercase tracking-[0.2em] text-xs transition-all active:scale-95 ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>Start Intelligence</button>
+          </form>
+        )}
+
+        {view === AuthView.SIGNIN_PASSWORD && (
+          <form onSubmit={handleFinalSignin} className="space-y-6 animate-in slide-in-from-right-4 duration-500 text-center">
+            <h3 className={`text-xl font-black ${isHacker ? 'text-green-500' : 'text-white'}`}>Welcome Back, Bhai</h3>
+            <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">{identifier}</p>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Enter Your Password"
+              className={`w-full px-8 py-5 rounded-3xl border bg-black font-bold outline-none ${
+                isHacker ? 'border-green-500/20 text-green-500 focus:border-green-500' : 'border-white/5 text-slate-100 focus:border-blue-600'
+              }`}
+              required
+              autoFocus
+            />
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button className={`w-full py-5 rounded-3xl font-black uppercase tracking-[0.2em] text-xs transition-all active:scale-95 ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>Establish Neural Link</button>
+            <button type="button" onClick={() => setView(AuthView.IDENTIFY)} className="w-full text-[9px] text-slate-600 font-black uppercase tracking-widest">Account change karna hai? (Back)</button>
+          </form>
+        )}
+
+        <div className="pt-8 border-t border-white/5 text-center space-y-4">
+          <p className="text-[9px] text-slate-700 font-black uppercase tracking-[0.3em]">
+            Developed by Himanshu Yadav | Secure Node v4.3
+          </p>
+        </div>
       </div>
     </div>
   );
 };
 
-export default ChatInterface;
+export default Login;
