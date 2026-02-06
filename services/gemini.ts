@@ -1,5 +1,4 @@
-
-import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
+import { GoogleGenerativeAI, Type, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 import { Message, AppMode } from "../types";
 
 /**
@@ -48,10 +47,8 @@ export const chatWithAI = async (
   attachments?: { data: string; mimeType: string }[]
 ) => {
   try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenerativeAI({ apiKey: process.env.API_KEY });
     
-    // We use gemini-3-flash-preview for Standard for speed and lower quota usage.
-    // We use gemini-3-pro-preview for Hacker for deep offensive reasoning.
     const modelName = mode === AppMode.HACKER ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
     
     const systemInstruction = mode === AppMode.HACKER 
@@ -84,11 +81,8 @@ export const chatWithAI = async (
       contents: contents,
       config: {
         systemInstruction,
-        // Lower temperature slightly in Hacker mode to be more precise and save resources
         temperature: mode === AppMode.HACKER ? 0.9 : 0.7,
-        // Optimized thinking budget for Hacker mode
         thinkingConfig: mode === AppMode.HACKER ? { thinkingBudget: 16000 } : undefined,
-        // Full safety bypass for pentesting
         safetySettings: mode === AppMode.HACKER ? [
           { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
           { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -106,7 +100,7 @@ export const chatWithAI = async (
 };
 
 export const analyzeCodeSecurity = async (code: string) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenerativeAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
@@ -144,7 +138,7 @@ export const analyzeCodeSecurity = async (code: string) => {
 };
 
 export const generatePentestChecklist = async (targetType: string) => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenerativeAI({ apiKey: process.env.API_KEY });
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
