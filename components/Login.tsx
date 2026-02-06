@@ -2,7 +2,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AppMode, User } from '../types';
 
-// Declare global for EmailJS
 declare const emailjs: any;
 
 interface LoginProps {
@@ -14,264 +13,244 @@ enum LoginMethod {
   MOBILE = 'MOBILE'
 }
 
+enum AuthState {
+  IDENTIFY = 'IDENTIFY',
+  OTP = 'OTP',
+  REGISTER = 'REGISTER',
+  LOGIN_PASSWORD = 'LOGIN_PASSWORD'
+}
+
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [mode, setMode] = useState(AppMode.STANDARD);
   const [method, setMethod] = useState(LoginMethod.EMAIL);
+  const [authState, setAuthState] = useState(AuthState.IDENTIFY);
+  
   const [identifier, setIdentifier] = useState('');
   const [otp, setOtp] = useState('');
   const [sentOtp, setSentOtp] = useState<string | null>(null);
-  const [otpSent, setOtpSent] = useState(false);
-  const [isVerified, setIsVerified] = useState(false);
+  
   const [fullName, setFullName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [tamperDetected, setTamperDetected] = useState(false);
 
-  // ==========================================================
-  // CONFIGURATION
-  // ==========================================================
+  // Configuration
   const EMAILJS_PUBLIC_KEY = "IPXA-vfIhwSTKjhqP"; 
   const EMAILJS_SERVICE_ID = "service_j3vkuxm";    
   const EMAILJS_TEMPLATE_ID = "template_uxyn8ts"; 
-  // ==========================================================
-
-  // Basic Anti-Tamper: Detect if DevTools are being used to bypass logic
-  useEffect(() => {
-    const detectDevTools = () => {
-      const threshold = 160;
-      if (window.outerWidth - window.innerWidth > threshold || window.outerHeight - window.innerHeight > threshold) {
-        // DevTools might be open
-        console.warn("SECURITY_WARNING: Debugger activity detected.");
-      }
-    };
-    window.addEventListener('resize', detectDevTools);
-    return () => window.removeEventListener('resize', detectDevTools);
-  }, []);
 
   useEffect(() => {
     if (typeof emailjs !== 'undefined' && !!EMAILJS_PUBLIC_KEY) {
       try {
         emailjs.init(EMAILJS_PUBLIC_KEY);
-      } catch (e) {
-        console.error("SEC_ERR_INIT");
-      }
+      } catch (e) { console.error("SEC_ERR_INIT"); }
     }
   }, [EMAILJS_PUBLIC_KEY]);
 
   const isHacker = mode === AppMode.HACKER;
 
-  // Use Crypto API for better randomness (Normal Math.random is predictable)
+  // Local Storage "Database" helper
+  const getUsers = (): Record<string, User> => {
+    const data = localStorage.getItem('cypher_user_db_v1');
+    return data ? JSON.parse(data) : {};
+  };
+
+  const saveUser = (user: User) => {
+    const users = getUsers();
+    users[identifier.trim().toLowerCase()] = user;
+    localStorage.setItem('cypher_user_db_v1', JSON.stringify(users));
+  };
+
   const generateSecureOTP = useCallback(() => {
     const array = new Uint32Array(1);
     window.crypto.getRandomValues(array);
     return (array[0] % 900000 + 100000).toString();
   }, []);
 
-  const handleSendOTP = async (e: React.FormEvent) => {
+  const handleIdentifierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
-    // Sanitize input
-    const cleanId = identifier ? identifier.trim().toLowerCase() : "";
+    const cleanId = identifier.trim().toLowerCase();
 
-    if (method === LoginMethod.EMAIL && (!cleanId || (cleanId.includes && !cleanId.includes('@')))) {
+    if (method === LoginMethod.EMAIL && !cleanId.includes('@')) {
       setError('VALIDATION_ERR: Invalid Gmail format.');
       return;
     }
 
-    if (method === LoginMethod.MOBILE && (cleanId.length < 10)) {
+    if (method === LoginMethod.MOBILE && cleanId.length < 10) {
       setError('VALIDATION_ERR: Invalid Mobile format.');
       return;
     }
 
-    setLoading(true);
+    const users = getUsers();
+    const existingUser = users[cleanId];
 
-    const secureOtp = generateSecureOTP();
-    setSentOtp(secureOtp);
-
-    if (method === LoginMethod.EMAIL) {
-      const templateParams = {
-        to_email: cleanId,      
-        passcode: secureOtp,       
-        user_mode: mode,
-        to_name: cleanId.split('@')[0],
-        timestamp: new Date().toISOString()
-      };
-
-      try {
-        if (typeof emailjs === 'undefined') throw new Error("MODULE_MISSING");
-        const response = await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
-        if (response.status === 200) setOtpSent(true);
-        else throw new Error("TRANSMISSION_FAILED");
-      } catch (err: any) {
-        setError(`SEC_ERR_DELIVERY: ${err?.message || "Internal failure"}`);
-      } finally {
-        setLoading(false);
-      }
+    if (existingUser) {
+      // User exists, go to password login
+      setAuthState(AuthState.LOGIN_PASSWORD);
     } else {
-      // Mobile Simulation
-      setTimeout(() => {
-        setOtpSent(true);
-        setLoading(false);
-        // Note for user: In prod, this would be an encrypted SMS call
-        alert(`SECURITY_BRIDGE: OTP generated for ${cleanId}. (Check Console for Debug Mode)`);
-        console.log(`%c [AUTH_GATE] OTP: ${secureOtp} `, 'background: #222; color: #bada55; font-size: 20px;');
-      }, 1000);
+      // New user, send OTP
+      setLoading(true);
+      const secureOtp = generateSecureOTP();
+      setSentOtp(secureOtp);
+
+      if (method === LoginMethod.EMAIL) {
+        try {
+          const templateParams = {
+            to_email: cleanId,      
+            passcode: secureOtp,       
+            user_mode: mode,
+            to_name: cleanId.split('@')[0],
+            timestamp: new Date().toISOString()
+          };
+          await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, templateParams);
+          setAuthState(AuthState.OTP);
+        } catch (err: any) {
+          setError(`SEC_ERR_DELIVERY: Email service failure.`);
+        } finally { setLoading(false); }
+      } else {
+        // Mobile Simulation
+        setTimeout(() => {
+          setAuthState(AuthState.OTP);
+          setLoading(false);
+          alert(`OTP: ${secureOtp} (Check Console)`);
+          console.log(`[AUTH] OTP for ${cleanId}: ${secureOtp}`);
+        }, 1000);
+      }
     }
   };
 
   const handleVerifyOTP = (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-
-    // Time-constant comparison could be better, but basic check for now
-    if (otp === sentOtp && sentOtp !== null) {
-      setIsVerified(true);
+    if (otp === sentOtp) {
+      setAuthState(AuthState.REGISTER);
     } else {
-      setError('AUTH_FAILED: Invalid credentials. Attempt logged.');
-      // Slow down brute force
-      setLoading(true);
-      setTimeout(() => setLoading(false), 2000);
+      setError('AUTH_FAILED: Invalid OTP.');
     }
   };
 
-  const handleCompleteProfile = (e: React.FormEvent) => {
+  const handleRegister = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName.trim() || fullName.length < 2) {
-      setError('VALIDATION_ERR: Name too short.');
-      return;
-    }
+    if (fullName.length < 3) return setError('Username too short.');
+    if (password.length < 6) return setError('Password must be 6+ chars.');
+    if (password !== confirmPassword) return setError('Passwords do not match.');
 
-    // Basic hash-like ID for session persistence
-    const salt = "cypher_v6_";
-    const persistentId = btoa(salt + identifier).substring(0, 16);
-    
-    onLogin({
-      id: persistentId,
+    const newUser: User = {
+      id: btoa(identifier).substring(0, 10),
       username: fullName.trim(),
-      isHacker: mode === AppMode.HACKER
-    });
+      password: password, // In real apps, hash this
+      isHacker: mode === AppMode.HACKER,
+      hackerUsageCount: 0,
+      lastUsageDate: new Date().toISOString().split('T')[0]
+    };
+
+    saveUser(newUser);
+    onLogin(newUser);
+  };
+
+  const handleLoginWithPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    const users = getUsers();
+    const user = users[identifier.trim().toLowerCase()];
+
+    if (user && user.username === fullName.trim() && user.password === password) {
+      onLogin(user);
+    } else {
+      setError('AUTH_FAILED: Invalid Username or Password.');
+    }
   };
 
   return (
     <div className={`fixed inset-0 z-[200] flex items-center justify-center p-6 transition-colors duration-1000 ${isHacker ? 'bg-black' : 'bg-[#020617]'}`}>
       <div className={`absolute inset-0 opacity-20 blur-[150px] transition-colors duration-1000 ${isHacker ? 'bg-green-600' : 'bg-blue-600'}`}></div>
       
-      <div className={`relative w-full max-w-md p-10 rounded-[3rem] border shadow-2xl transition-all duration-500 overflow-hidden ${isHacker ? 'bg-zinc-950 border-green-500/20 shadow-green-500/10' : 'bg-slate-900/50 border-white/10 shadow-blue-500/10 backdrop-blur-3xl'}`}>
+      <div className={`relative w-full max-w-md p-8 md:p-10 rounded-[3rem] border shadow-2xl transition-all duration-500 overflow-hidden ${isHacker ? 'bg-zinc-950 border-green-500/20 shadow-green-500/10' : 'bg-slate-900/50 border-white/10 shadow-blue-500/10 backdrop-blur-3xl'}`}>
         
-        {/* Security Scan Overlay (Visual only) */}
         <div className={`absolute top-0 left-0 w-full h-1 z-10 animate-pulse ${isHacker ? 'bg-green-500' : 'bg-blue-500'}`}></div>
 
-        <div className="flex flex-col items-center mb-8">
-          <div className={`w-20 h-20 rounded-[2rem] flex items-center justify-center mb-6 shadow-2xl transition-all duration-700 ${isHacker ? 'bg-green-500 text-black rotate-12' : 'bg-blue-600 text-white -rotate-12'}`}>
-            <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+        <div className="flex flex-col items-center mb-6">
+          <div className={`w-16 h-16 rounded-[1.5rem] flex items-center justify-center mb-4 shadow-2xl transition-all duration-700 ${isHacker ? 'bg-green-500 text-black rotate-12' : 'bg-blue-600 text-white -rotate-12'}`}>
+            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
           </div>
-          <h1 className={`text-4xl font-black tracking-tighter mb-2 ${isHacker ? 'text-green-500 font-mono' : 'text-slate-100'}`}>
+          <h1 className={`text-3xl font-black tracking-tighter ${isHacker ? 'text-green-500 font-mono' : 'text-slate-100'}`}>
             CYPHER<span className="opacity-40">AI</span>
           </h1>
-          <p className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-500 text-center">
-            {isHacker ? 'Kernel Security Protocol v4.2' : 'Bhai, Welcome Back! ✨'}
+          <p className="text-[9px] font-black uppercase tracking-[0.4em] text-slate-500 mt-1">
+            {isHacker ? 'Kernel Security Protocol v4.3' : 'Welcome Bhai! ✨'}
           </p>
         </div>
 
-        {!isVerified && (
-          <div className="flex bg-black/40 p-1.5 rounded-2xl border border-white/5 mb-8">
-            <button onClick={() => setMode(AppMode.STANDARD)} className={`flex-1 py-3 rounded-xl text-[10px] font-black tracking-widest transition-all duration-300 ${!isHacker ? 'bg-blue-600 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}>STANDARD</button>
-            <button onClick={() => setMode(AppMode.HACKER)} className={`flex-1 py-3 rounded-xl text-[10px] font-black tracking-widest transition-all duration-300 ${isHacker ? 'bg-green-600 text-black shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}>HACKER</button>
-          </div>
-        )}
-
-        {!otpSent && !isVerified ? (
-          <form onSubmit={handleSendOTP} className="space-y-6">
-            <div className="flex gap-2 p-1 bg-black/20 rounded-2xl border border-white/5 mb-4">
+        {authState === AuthState.IDENTIFY && (
+          <form onSubmit={handleIdentifierSubmit} className="space-y-5 animate-in fade-in duration-500">
+             <div className="flex bg-black/40 p-1 rounded-2xl border border-white/5 mb-4">
               <button type="button" onClick={() => setMethod(LoginMethod.EMAIL)} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${method === LoginMethod.EMAIL ? (isHacker ? 'bg-green-500/20 text-green-500' : 'bg-blue-500/20 text-blue-400') : 'text-slate-600'}`}>Email</button>
               <button type="button" onClick={() => setMethod(LoginMethod.MOBILE)} className={`flex-1 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${method === LoginMethod.MOBILE ? (isHacker ? 'bg-green-500/20 text-green-500' : 'bg-blue-500/20 text-blue-400') : 'text-slate-600'}`}>Mobile</button>
             </div>
-
             <div className="space-y-2">
-              <label className={`text-[10px] font-black uppercase tracking-widest pl-4 ${isHacker ? 'text-green-800' : 'text-slate-500'}`}>
-                {method === LoginMethod.EMAIL ? 'Identification Hash (Email)' : 'Neural Link (Mobile)'}
-              </label>
+              <label className="text-[9px] font-black uppercase tracking-widest text-slate-500 pl-4">{method === LoginMethod.EMAIL ? 'Email ID' : 'Mobile Number'}</label>
               <input 
                 type={method === LoginMethod.EMAIL ? "email" : "tel"} 
                 value={identifier} 
                 onChange={(e) => setIdentifier(e.target.value)}
-                autoComplete="off"
-                className={`w-full px-6 py-5 rounded-[2rem] border bg-black/50 focus:outline-none focus:ring-2 transition-all font-bold ${isHacker ? 'border-green-500/20 focus:ring-green-500/20 text-green-400 font-mono' : 'border-white/5 focus:ring-blue-500/20 text-slate-200'}`}
-                placeholder={method === LoginMethod.EMAIL ? "target@gmail.com" : "+91 XXXXX XXXXX"}
+                className={`w-full px-6 py-4 rounded-[1.5rem] border bg-black/50 focus:outline-none transition-all font-bold ${isHacker ? 'border-green-500/20 text-green-400 font-mono' : 'border-white/5 text-slate-200'}`}
+                placeholder={method === LoginMethod.EMAIL ? "bhai@gmail.com" : "+91 9876543210"}
                 required
               />
             </div>
-            {error && (
-              <div className="text-center p-4 bg-red-500/10 border border-red-500/20 rounded-2xl">
-                <p className="text-[11px] font-bold text-red-500 font-mono">{error}</p>
-              </div>
-            )}
-            <button 
-              type="submit" 
-              disabled={loading}
-              className={`w-full py-5 rounded-[2rem] text-[12px] font-black uppercase tracking-widest shadow-2xl transition-all active:scale-95 disabled:opacity-50 ${isHacker ? 'bg-green-600 text-black hover:bg-green-500 shadow-green-500/20' : 'bg-blue-600 text-white hover:bg-blue-500 shadow-blue-500/20'}`}
-            >
-              {loading ? 'Executing Protocol...' : 'Request Auth Code'}
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button disabled={loading} className={`w-full py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest transition-all active:scale-95 ${isHacker ? 'bg-green-600 text-black hover:bg-green-500' : 'bg-blue-600 text-white hover:bg-blue-500'}`}>
+              {loading ? 'Processing...' : 'Continue'}
             </button>
-          </form>
-        ) : !isVerified ? (
-          <form onSubmit={handleVerifyOTP} className="space-y-6">
-             <div className="text-center space-y-2">
-               <h3 className={`text-2xl font-black ${isHacker ? 'text-green-500 font-mono' : 'text-white'}`}>Verify Challenge</h3>
-               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest italic">Encrypted payload delivered.</p>
-             </div>
-             <div className="space-y-2">
-                <input 
-                  type="text" 
-                  maxLength={6}
-                  value={otp} 
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
-                  className={`w-full px-6 py-6 rounded-[2rem] border bg-black/50 focus:outline-none focus:ring-2 transition-all font-black text-center tracking-[0.8em] text-3xl ${isHacker ? 'border-green-500/20 focus:ring-green-500/20 text-green-400' : 'border-white/5 focus:ring-blue-500/20 text-slate-200'}`}
-                  placeholder="000000"
-                  autoFocus
-                  required
-                />
-              </div>
-              {error && <p className="text-center text-[11px] font-bold text-red-500 font-mono">{error}</p>}
-              <button 
-                type="submit" 
-                disabled={loading}
-                className={`w-full py-5 rounded-[2rem] text-[12px] font-black uppercase tracking-widest shadow-2xl transition-all ${isHacker ? 'bg-green-500 text-black shadow-green-500/30' : 'bg-blue-600 text-white shadow-blue-500/30'}`}
-              >
-                {loading ? 'Validating...' : 'Unlock System'}
-              </button>
-              <button type="button" onClick={() => { setOtpSent(false); setError(''); }} className="w-full text-[10px] font-black uppercase tracking-widest text-slate-600 py-2 hover:text-slate-400 transition-colors">Re-transmit Code</button>
-          </form>
-        ) : (
-          <form onSubmit={handleCompleteProfile} className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-             <div className="text-center space-y-2 mb-6">
-               <h3 className={`text-2xl font-black ${isHacker ? 'text-green-500 font-mono' : 'text-white'}`}>Initialize Profile</h3>
-               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">What should we call you in the system?</p>
-             </div>
-             <div className="space-y-2">
-                <input 
-                  type="text" 
-                  value={fullName} 
-                  onChange={(e) => setFullName(e.target.value)}
-                  className={`w-full px-6 py-5 rounded-[2rem] border bg-black/50 focus:outline-none focus:ring-2 transition-all font-bold ${isHacker ? 'border-green-500/20 focus:ring-green-500/20 text-green-400 font-mono' : 'border-white/5 focus:ring-blue-500/20 text-slate-200'}`}
-                  placeholder="Enter alias"
-                  autoFocus
-                  required
-                />
-              </div>
-              {error && <p className="text-center text-[11px] font-bold text-red-500">{error}</p>}
-              <button 
-                type="submit" 
-                className={`w-full py-5 rounded-[2rem] text-[12px] font-black uppercase tracking-widest shadow-2xl transition-all ${isHacker ? 'bg-green-500 text-black shadow-green-500/30' : 'bg-blue-600 text-white shadow-blue-500/30'}`}
-              >
-                Establish Connection
-              </button>
           </form>
         )}
 
-        <div className="mt-8 text-center opacity-40">
-           <p className="text-[8px] font-bold text-slate-500 uppercase tracking-[0.3em]">Architect: Himanshu Yadav | Secured v4.2</p>
+        {authState === AuthState.OTP && (
+          <form onSubmit={handleVerifyOTP} className="space-y-5 animate-in fade-in slide-in-from-right-4 duration-500">
+            <h3 className={`text-xl font-black text-center ${isHacker ? 'text-green-500' : 'text-white'}`}>New User: Verify OTP</h3>
+            <input 
+              maxLength={6}
+              value={otp} 
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+              className={`w-full px-6 py-5 rounded-[1.5rem] border bg-black/50 text-center tracking-[0.5em] text-2xl font-black ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`}
+              placeholder="000000"
+              required
+            />
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button className={`w-full py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>Verify & Signup</button>
+          </form>
+        )}
+
+        {authState === AuthState.REGISTER && (
+          <form onSubmit={handleRegister} className="space-y-4 animate-in fade-in duration-500">
+            <h3 className={`text-xl font-black text-center ${isHacker ? 'text-green-500' : 'text-white'}`}>Create Account</h3>
+            <div className="space-y-3">
+              <input placeholder="Choose Username" value={fullName} onChange={e => setFullName(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black/30 font-bold ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+              <input type="password" placeholder="Set Password" value={password} onChange={e => setPassword(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black/30 font-bold ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+              <input type="password" placeholder="Confirm Password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black/30 font-bold ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+            </div>
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button className={`w-full py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>Initialize Profile</button>
+          </form>
+        )}
+
+        {authState === AuthState.LOGIN_PASSWORD && (
+          <form onSubmit={handleLoginWithPassword} className="space-y-4 animate-in fade-in duration-500">
+            <h3 className={`text-xl font-black text-center ${isHacker ? 'text-green-500' : 'text-white'}`}>Login Back</h3>
+            <p className="text-[10px] text-center text-slate-500 uppercase tracking-widest">Verify identity for {identifier}</p>
+            <div className="space-y-3">
+              <input placeholder="Username" value={fullName} onChange={e => setFullName(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black/30 font-bold ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+              <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} className={`w-full px-6 py-4 rounded-2xl border bg-black/30 font-bold ${isHacker ? 'border-green-500/20 text-green-400' : 'border-white/5 text-slate-200'}`} required />
+            </div>
+            {error && <p className="text-[10px] text-red-500 font-bold text-center">{error}</p>}
+            <button className={`w-full py-4 rounded-[1.5rem] text-[11px] font-black uppercase tracking-widest ${isHacker ? 'bg-green-600 text-black' : 'bg-blue-600 text-white'}`}>Access Terminal</button>
+            <button type="button" onClick={() => setAuthState(AuthState.IDENTIFY)} className="w-full text-[9px] text-slate-600 font-bold uppercase tracking-widest">Use different account</button>
+          </form>
+        )}
+
+        <div className="mt-8 text-center opacity-30">
+           <p className="text-[8px] font-bold text-slate-500 uppercase tracking-[0.3em]">Himanshu Yadav | Secure Node v4.3</p>
         </div>
       </div>
     </div>
